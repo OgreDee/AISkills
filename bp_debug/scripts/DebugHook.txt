@@ -4,20 +4,20 @@
     输出: UnityEngine.Debug.LogWarning (Console) + DebugCaptureWriter (JSONL)
 
     基础用法:
-      require("Utils/DebugHook").WatchLine("RPG/Entity/EntityHero", 120)
-      require("Utils/DebugHook").WatchNil("UI/Hero/UI_Hero_Main", 402, "heroBaseConf")
-      require("Utils/DebugHook").WatchCall("RPG/Entity/EntityHero", "TakeDamage")
+      require("Claude/DebugHook").WatchLine("RPG/Entity/EntityHero", 120)
+      require("Claude/DebugHook").WatchNil("UI/Hero/UI_Hero_Main", 402, "heroBaseConf")
+      require("Claude/DebugHook").WatchCall("RPG/Entity/EntityHero", "TakeDamage")
 
     多断点:
-      require("Utils/DebugHook").WatchMulti({
+      require("Claude/DebugHook").WatchMulti({
           {source="RPG/Entity/EntityHero", line=120, vars={"self","hp"}},
           {source="RPG/Entity/EntityHero", line=135},
           {source="UI/Hero/UI_Hero_Main", line=402, cond={var="heroBaseConf",op="==",value=nil}},
       })
 
     控制:
-      require("Utils/DebugHook").Stop()
-      require("Utils/DebugHook").IsActive()
+      require("Claude/DebugHook").Stop()
+      require("Claude/DebugHook").IsActive()
 ]]
 
 local DebugHook = {}

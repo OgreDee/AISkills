@@ -11,8 +11,8 @@
 #                 不传则使用当前工作目录
 #
 # 部署文件:
-#   Assets/HotRes/Lua/Utils/HotReload.txt         Lua 热重载核心逻辑
-#   Assets/Editor/Claude/LuaHotReloadMcpTool.cs   MCP 执行工具
+#   Assets/HotRes/Lua/Claude/HotReload.txt         Lua 热重载核心逻辑
+#   Assets/Claude/Editor/LuaHotReloadMcpTool.cs    MCP 执行工具
 #
 # 前置依赖:
 #   - MCP for Unity (com.mcp4u.mcpforunity)
@@ -52,8 +52,8 @@ if [ ! -d "$PROJECT_ROOT/Assets" ]; then
 fi
 
 # ─── 配置目标路径 ───
-LUA_DIR="$PROJECT_ROOT/Assets/HotRes/Lua/Utils"
-EDITOR_DIR="$PROJECT_ROOT/Assets/Editor/Claude"
+LUA_DIR="$PROJECT_ROOT/Assets/HotRes/Lua/Claude"
+EDITOR_DIR="$PROJECT_ROOT/Assets/Claude/Editor"
 
 # ─── 创建目录 ───
 echo -e "${CYAN}[1/3] 创建目标目录...${NC}"
@@ -91,8 +91,8 @@ echo -e "${GREEN}  部署完成!${NC}"
 echo -e "${GREEN}═══════════════════════════════════════════${NC}"
 echo ""
 echo "  部署的文件:"
-echo "    [Lua]  Assets/HotRes/Lua/Utils/HotReload.txt"
-echo "    [C#]   Assets/Editor/Claude/LuaHotReloadMcpTool.cs"
+echo "    [Lua]  Assets/HotRes/Lua/Claude/HotReload.txt"
+echo "    [C#]   Assets/Claude/Editor/LuaHotReloadMcpTool.cs"
 echo ""
 echo -e "  ${YELLOW}注意事项:${NC}"
 echo "    1. 依赖 MCP for Unity 包 (com.mcp4u.mcpforunity)"

@@ -17,8 +17,8 @@ bash .claude/skills/lua_hot_reload/install.sh
 ```
 
 部署的文件：
-- `Assets/HotRes/Lua/Utils/HotReload.txt` — Lua 热重载核心（in-place patch）
-- `Assets/Editor/Claude/LuaHotReloadMcpTool.cs` — MCP 自定义工具
+- `Assets/HotRes/Lua/Claude/HotReload.txt` — Lua 热重载核心（in-place patch）
+- `Assets/Claude/Editor/LuaHotReloadMcpTool.cs` — MCP 自定义工具
 
 ## 使用方法
 
@@ -45,7 +45,7 @@ bash .claude/skills/lua_hot_reload/install.sh
 
 ### Step 2: 确认已安装
 
-检查 `Assets/HotRes/Lua/Utils/HotReload.txt` 是否存在：
+检查 `Assets/HotRes/Lua/Claude/HotReload.txt` 是否存在：
 - 不存在 → 自动执行 `bash .claude/skills/lua_hot_reload/install.sh` 安装
 - 存在 → 继续
 
@@ -104,7 +104,7 @@ mcp__coplay-mcp__execute_custom_tool(
 如果 MCP 调用失败（Unity 未运行/未连接），输出手动方案：
 ```
 ⚠️ MCP 不可用，请在 Unity Console 中手动执行：
-   local HR = require('Utils/HotReload'); HR.Execute("MOD_PATH")
+   local HR = require('Claude/HotReload'); HR.Execute("MOD_PATH")
 ```
 
 **❌ 不可热重载**：

@@ -46,7 +46,7 @@ namespace Claude.Editor
             {
                 // Ensure HotReload module is loaded
                 string luaCode = string.Format(
-                    @"local HR = require('Utils/HotReload')
+                    @"local HR = require('Claude/HotReload')
                       local ok, msg = HR.Execute('{0}')
                       if ok then return 'OK:' .. msg else return 'FAIL:' .. msg end",
                     modPath.Replace("'", "\\'"));

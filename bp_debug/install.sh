@@ -11,9 +11,9 @@
 #                 不传则使用当前工作目录
 #
 # 部署文件:
-#   Assets/HotRes/Lua/Utils/DebugHook.txt      Lua 断点 Hook
-#   Assets/Editor/Claude/DebugCaptureWriter.cs  JSONL 写入器
-#   Assets/Editor/Claude/LuaDebugMcpTool.cs     MCP 执行工具
+#   Assets/HotRes/Lua/Claude/DebugHook.txt      Lua 断点 Hook
+#   Assets/Claude/Editor/DebugCaptureWriter.cs  JSONL 写入器
+#   Assets/Claude/Editor/LuaDebugMcpTool.cs     MCP 执行工具
 #   .claude/debug_capture.jsonl                 输出文件 (空)
 #
 # 前置依赖:
@@ -55,8 +55,8 @@ if [ ! -d "$PROJECT_ROOT/Assets" ]; then
 fi
 
 # ─── 配置目标路径 ───
-LUA_DIR="$PROJECT_ROOT/Assets/HotRes/Lua/Utils"
-EDITOR_DIR="$PROJECT_ROOT/Assets/Editor/Claude"
+LUA_DIR="$PROJECT_ROOT/Assets/HotRes/Lua/Claude"
+EDITOR_DIR="$PROJECT_ROOT/Assets/Claude/Editor"
 TEMP_DIR="$PROJECT_ROOT/Temp"
 
 # ─── 创建目录 ───
@@ -116,9 +116,9 @@ echo -e "${GREEN}  部署完成!${NC}"
 echo -e "${GREEN}═══════════════════════════════════════════${NC}"
 echo ""
 echo "  部署的文件:"
-echo "    [Lua]    Assets/HotRes/Lua/Utils/DebugHook.txt"
-echo "    [C#]     Assets/Editor/Claude/DebugCaptureWriter.cs"
-echo "    [C#]     Assets/Editor/Claude/LuaDebugMcpTool.cs"
+echo "    [Lua]    Assets/HotRes/Lua/Claude/DebugHook.txt"
+echo "    [C#]     Assets/Claude/Editor/DebugCaptureWriter.cs"
+echo "    [C#]     Assets/Claude/Editor/LuaDebugMcpTool.cs"
 echo "    [Output] Temp/debug_capture.jsonl"
 echo ""
 echo -e "  ${YELLOW}注意事项:${NC}"

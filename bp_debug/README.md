@@ -42,9 +42,9 @@ bash /path/to/bp_debug/install.sh .
 ```
 
 脚本会将文件部署到：
-- `Assets/HotRes/Lua/Utils/DebugHook.txt`
-- `Assets/Editor/Claude/DebugCaptureWriter.cs`
-- `Assets/Editor/Claude/LuaDebugMcpTool.cs`
+- `Assets/HotRes/Lua/Claude/DebugHook.txt`
+- `Assets/Claude/Editor/DebugCaptureWriter.cs`
+- `Assets/Claude/Editor/LuaDebugMcpTool.cs`
 
 ### 2. 适配你的 Lua 绑定
 
@@ -70,7 +70,7 @@ bash /path/to/bp_debug/install.sh .
 提供断点注册与运行时捕获能力：
 
 ```lua
-local dbg = require("Utils/DebugHook")
+local dbg = require("Claude/DebugHook")
 
 -- 单行断点
 dbg.WatchLine("RPG/Entity/EntityHero", 120)

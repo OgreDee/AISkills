@@ -1,6 +1,6 @@
 -- HotReload.txt
 -- 独立的 Lua 热重载模块，不依赖项目已有 Reload 函数
--- 部署到: Assets/HotRes/Lua/Utils/HotReload.txt
+-- 部署到: Assets/HotRes/Lua/Claude/HotReload.txt
 
 local class = {}
 

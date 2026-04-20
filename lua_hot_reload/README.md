@@ -58,8 +58,8 @@ bash .claude/skills/lua_hot_reload/install.sh
 ```
 
 脚本会将运行时文件部署到：
-- `Assets/HotRes/Lua/Utils/HotReload.txt`
-- `Assets/Editor/Claude/LuaHotReloadMcpTool.cs`
+- `Assets/HotRes/Lua/Claude/HotReload.txt`
+- `Assets/Claude/Editor/LuaHotReloadMcpTool.cs`
 
 ### 2. 适配
 
@@ -91,7 +91,7 @@ bash .claude/skills/lua_hot_reload/install.sh
 Lua 热重载核心模块，提供单一 API：
 
 ```lua
-local HR = require('Utils/HotReload')
+local HR = require('Claude/HotReload')
 local ok, msg = HR.Execute("UI/Hero/UI_Hero_HeroList")
 ```
 
