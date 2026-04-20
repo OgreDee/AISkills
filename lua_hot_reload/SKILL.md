@@ -1,6 +1,7 @@
 ---
 name: lua_hot_reload
 description: 分析修改的 Lua 文件是否可热重载，可以则通过 MCP 执行，不可以则提示原因
+tags: [lua, unity]
 ---
 
 # Lua 热重载

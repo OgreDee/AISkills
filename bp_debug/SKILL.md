@@ -1,6 +1,7 @@
 ---
 name: bp_debug
 description: 自动断点调试：分析bug→设断点→用户触发→读取JSONL→分析→迭代，全自动定位Lua根因
+tags: [debug, lua, unity]
 ---
 
 # Lua 自动断点调试
