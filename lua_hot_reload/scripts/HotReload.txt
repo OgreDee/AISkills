@@ -1,0 +1,67 @@
+-- HotReload.txt
+-- 独立的 Lua 热重载模块，不依赖项目已有 Reload 函数
+-- 部署到: Assets/HotRes/Lua/Utils/HotReload.txt
+
+local class = {}
+
+--- 热重载指定模块
+--- 将新文件的函数/字段 patch 到旧 module table，使已有引用自动生效
+---@param modPath string require 路径，如 "UI/Hero/UI_Hero_HeroList"
+---@return boolean success
+---@return string message
+function class.Execute(modPath)
+    if not modPath or modPath == "" then
+        return false, "modPath is nil or empty"
+    end
+
+    -- 1. 取出旧 module
+    local oldModule = package.loaded[modPath]
+    if oldModule == nil then
+        -- 从未被 require 过，直接 require 即可
+        local ok, err = pcall(require, modPath)
+        if ok then
+            return true, "module freshly loaded (was not cached)"
+        else
+            return false, "require failed: " .. tostring(err)
+        end
+    end
+
+    -- 2. 清除缓存
+    package.loaded[modPath] = nil
+
+    -- 3. 重新 require 获取新 module
+    local ok, newModule = pcall(require, modPath)
+    if not ok then
+        -- 加载失败，恢复旧模块避免破坏运行时
+        package.loaded[modPath] = oldModule
+        return false, "reload failed, reverted: " .. tostring(newModule)
+    end
+
+    -- 4. 如果新旧是同一个 table（模块内部自己做了 cache），直接成功
+    if newModule == oldModule then
+        return true, "module self-cached, reload done"
+    end
+
+    -- 5. 如果旧模块是 table，将新模块的内容 patch 进去
+    if type(oldModule) == "table" and type(newModule) == "table" then
+        -- 清除旧方法（防止删除的方法残留）
+        for k, v in pairs(oldModule) do
+            if type(v) == "function" then
+                oldModule[k] = nil
+            end
+        end
+        -- 拷贝新内容到旧 table
+        for k, v in pairs(newModule) do
+            oldModule[k] = v
+        end
+        -- 恢复 package.loaded 指向旧 table（保持引用链）
+        package.loaded[modPath] = oldModule
+        return true, "patched " .. modPath
+    end
+
+    -- 6. 非 table 类型，直接替换（少见）
+    package.loaded[modPath] = newModule
+    return true, "replaced (non-table module)"
+end
+
+return class
