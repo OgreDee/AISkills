@@ -1,0 +1,894 @@
+--[[
+    DebugHook v2 - 多断点并发调试工具
+    基于 "crl" 组合 hook：call/return 追踪当前文件，line 精确命中断点
+    输出: UnityEngine.Debug.LogWarning (Console) + DebugCaptureWriter (JSONL)
+
+    基础用法:
+      require("Utils/DebugHook").WatchLine("RPG/Entity/EntityHero", 120)
+      require("Utils/DebugHook").WatchNil("UI/Hero/UI_Hero_Main", 402, "heroBaseConf")
+      require("Utils/DebugHook").WatchCall("RPG/Entity/EntityHero", "TakeDamage")
+
+    多断点:
+      require("Utils/DebugHook").WatchMulti({
+          {source="RPG/Entity/EntityHero", line=120, vars={"self","hp"}},
+          {source="RPG/Entity/EntityHero", line=135},
+          {source="UI/Hero/UI_Hero_Main", line=402, cond={var="heroBaseConf",op="==",value=nil}},
+      })
+
+    控制:
+      require("Utils/DebugHook").Stop()
+      require("Utils/DebugHook").IsActive()
+]]
+
+local DebugHook = {}
+
+-- ═══════════════════════════════════════════
+--region 配置
+-- ═══════════════════════════════════════════
+local DEFAULT_MAX_CAPTURES = 5
+local DEFAULT_TABLE_DEPTH  = 3
+local DEFAULT_TABLE_FIELDS = 30
+local DEFAULT_STACK_DEPTH  = 6
+local PERF_FPS_THRESHOLD   = 15
+local PERF_KILL_FRAMES     = 30
+local BUFFER_MAX           = 256
+--endregion
+
+-- ═══════════════════════════════════════════
+--region 状态
+-- ═══════════════════════════════════════════
+local isActive = false
+local totalCaptures = 0
+local maxCaptures = DEFAULT_MAX_CAPTURES
+local captureResults = {}
+
+-- 断点表: breakpoints[normalizedSource][line] = breakpointConfig
+local breakpoints = {}
+local breakpointCount = 0
+
+-- "crl" hook 的文件追踪
+local currentSource = nil
+local currentFileHasBP = false
+local sourceStack = {}
+local stackTop = 0
+
+-- func → source 缓存
+local funcSourceCache = setmetatable({}, {__mode = "k"})
+
+-- 环形缓冲
+local ringBuffer = {}
+local bufferHead = 0
+
+-- 性能安全阀
+local lowFPSCount = 0
+
+-- 选项
+local optMaxDepth = DEFAULT_TABLE_DEPTH
+local optMaxFields = DEFAULT_TABLE_FIELDS
+local optStackDepth = DEFAULT_STACK_DEPTH
+
+-- 协程 hook 保存
+local originalCoroutineCreate = nil
+local originalCoroutineWrap = nil
+local hookFunc = nil
+
+-- JSONL 文件输出
+local captureWriterAvailable = false
+--endregion
+
+-- ═══════════════════════════════════════════
+--region 输出
+-- ═══════════════════════════════════════════
+local function output(msg)
+    if UnityEngine and UnityEngine.Debug then
+        UnityEngine.Debug.LogWarning(msg)
+    else
+        print(msg)
+    end
+end
+
+local function logError(msg)
+    if UnityEngine and UnityEngine.Debug then
+        UnityEngine.Debug.LogError(msg)
+    else
+        print("[ERROR] " .. msg)
+    end
+end
+--endregion
+
+-- ═══════════════════════════════════════════
+--region 工具函数
+-- ═══════════════════════════════════════════
+local debug_getinfo = debug.getinfo
+local debug_getlocal = debug.getlocal
+local debug_getupvalue = debug.getupvalue
+local debug_sethook = debug.sethook
+local debug_gethook = debug.gethook
+local string_sub = string.sub
+local string_gsub = string.gsub
+local string_format = string.format
+local table_concat = table.concat
+local type = type
+local tostring = tostring
+local pcall = pcall
+local pairs = pairs
+local ipairs = ipairs
+local math_min = math.min
+
+local function normalizeSource(source)
+    if not source then return "" end
+    -- @prefix (标准 Lua file chunk)
+    if string_sub(source, 1, 1) == "@" then
+        source = string_sub(source, 2)
+    end
+    -- [string "..."] format (XLua custom loader)
+    local inner = source:match('^%[string "(.-)"%]$')
+    if inner then
+        source = inner
+    end
+    source = string_gsub(source, "\\", "/")
+    source = string_gsub(source, "%.txt$", "")
+    source = string_gsub(source, "%.lua$", "")
+    return source
+end
+
+local function sourceExactMatch(source, pattern)
+    if source == pattern then return true end
+    -- 尾部匹配: "RPG/Entity/EntityHero" 匹配 source 末尾
+    local sLen = #source
+    local pLen = #pattern
+    if sLen < pLen then return false end
+    if string_sub(source, sLen - pLen + 1) == pattern then
+        if sLen == pLen then return true end
+        local c = string_sub(source, sLen - pLen, sLen - pLen)
+        return c == "/"
+    end
+    return false
+end
+
+local function safeToStr(v)
+    local t = type(v)
+    if t == "string" then
+        if #v > 200 then
+            return '"' .. string_sub(v, 1, 200) .. '..."'
+        end
+        return '"' .. v .. '"'
+    elseif t == "userdata" then
+        local ok, s = pcall(tostring, v)
+        if ok then
+            local nameOk, name = pcall(function() return v.name end)
+            if nameOk and name then
+                return s .. '(name="' .. tostring(name) .. '")'
+            end
+            return s
+        end
+        return "<userdata>"
+    elseif t == "function" then
+        local info = debug_getinfo(v, "S")
+        if info then
+            return "function@" .. (info.source or "?") .. ":" .. (info.linedefined or "?")
+        end
+        return tostring(v)
+    else
+        return tostring(v)
+    end
+end
+
+local function dumpTable(t, depth, maxDepth, maxFields, visited)
+    if depth > maxDepth then return "{...}" end
+    if visited[t] then return "<circular:" .. tostring(t) .. ">" end
+    visited[t] = true
+
+    local parts = {}
+    local count = 0
+    for k, v in pairs(t) do
+        count = count + 1
+        if count > maxFields then
+            local total = count
+            for _ in pairs(t) do total = total + 1 end
+            parts[#parts + 1] = "  ... total " .. total .. " fields"
+            break
+        end
+        local indent = string.rep("  ", depth + 1)
+        local keyStr = type(k) == "string" and k or ("[" .. tostring(k) .. "]")
+        if type(v) == "table" then
+            parts[#parts + 1] = indent .. keyStr .. " = " .. dumpTable(v, depth + 1, maxDepth, maxFields, visited)
+        else
+            parts[#parts + 1] = indent .. keyStr .. " = " .. safeToStr(v) .. "  [" .. type(v) .. "]"
+        end
+    end
+    visited[t] = nil
+    if #parts == 0 then return "{}" end
+    local baseIndent = string.rep("  ", depth)
+    return "{\n" .. table_concat(parts, "\n") .. "\n" .. baseIndent .. "}"
+end
+--endregion
+
+-- ═══════════════════════════════════════════
+--region JSON 编码 (轻量)
+-- ═══════════════════════════════════════════
+local jsonEncode
+do
+    local escMap = {['"'] = '\\"', ['\\'] = '\\\\', ['\n'] = '\\n', ['\r'] = '\\r', ['\t'] = '\\t'}
+    local function escStr(s)
+        if #s > 500 then s = string_sub(s, 1, 500) .. "..." end
+        return '"' .. s:gsub('["\\\n\r\t]', escMap) .. '"'
+    end
+
+    local function enc(v, depth, visited)
+        if depth > 4 then return '"<depth>"' end
+        local t = type(v)
+        if t == "nil" then return "null"
+        elseif t == "boolean" then return v and "true" or "false"
+        elseif t == "number" then
+            if v ~= v then return '"NaN"' end
+            if v == math.huge then return '"Inf"' end
+            if v == -math.huge then return '"-Inf"' end
+            return tostring(v)
+        elseif t == "string" then return escStr(v)
+        elseif t == "table" then
+            if visited[v] then return '"<circular>"' end
+            visited[v] = true
+            local parts = {}
+            local count = 0
+            for k, val in pairs(v) do
+                count = count + 1
+                if count > 50 then
+                    parts[#parts + 1] = '"__truncated__":true'
+                    break
+                end
+                local key = type(k) == "string" and escStr(k) or ('"[' .. tostring(k) .. ']"')
+                parts[#parts + 1] = key .. ":" .. enc(val, depth + 1, visited)
+            end
+            visited[v] = nil
+            return "{" .. table_concat(parts, ",") .. "}"
+        else
+            local ok, s = pcall(tostring, v)
+            return escStr(ok and s or ("<" .. t .. ">"))
+        end
+    end
+
+    jsonEncode = function(v) return enc(v, 0, {}) end
+end
+--endregion
+
+-- ═══════════════════════════════════════════
+--region 捕获
+-- ═══════════════════════════════════════════
+local function captureLocals(level)
+    local vars = {}
+    local order = {}
+    local i = 1
+    while i <= 250 do
+        local name, value = debug_getlocal(level, i)
+        if not name then break end
+        if string_sub(name, 1, 1) ~= "(" then
+            vars[name] = value
+            order[#order + 1] = name
+        end
+        i = i + 1
+    end
+    return vars, order
+end
+
+local function captureUpvalues(func)
+    if not func then return {}, {} end
+    local vars = {}
+    local order = {}
+    local i = 1
+    while true do
+        local name, value = debug_getupvalue(func, i)
+        if not name then break end
+        if name ~= "_ENV" and string_sub(name, 1, 1) ~= "(" then
+            vars[name] = value
+            order[#order + 1] = name
+        end
+        i = i + 1
+    end
+    return vars, order
+end
+
+local function captureStack(startLevel, depth)
+    local frames = {}
+    for level = startLevel, startLevel + depth - 1 do
+        local info = debug_getinfo(level, "Snl")
+        if not info then break end
+        local frame = {
+            source = info.source or "?",
+            line = info.currentline or -1,
+            func = info.name or "<anonymous>",
+            what = info.what or "?",
+        }
+        -- 前 3 层采集 locals
+        -- captureLocals 内部多一层栈帧，所以 level+1
+        if level - startLevel < 3 then
+            local locals, _ = captureLocals(level + 1)
+            frame.locals = locals
+        end
+        frames[#frames + 1] = frame
+    end
+    return frames
+end
+--endregion
+
+-- ═══════════════════════════════════════════
+--region 格式化输出 (Console)
+-- ═══════════════════════════════════════════
+local function formatVar(name, value, depth, maxDepth, maxFields)
+    if type(value) == "table" then
+        return "  " .. name .. " = " .. dumpTable(value, depth, maxDepth, maxFields, {})
+    else
+        return "  " .. name .. " = " .. safeToStr(value) .. "  [" .. type(value) .. "]"
+    end
+end
+
+local function formatCapture(cap)
+    local lines = {}
+    lines[#lines + 1] = ""
+    lines[#lines + 1] = "╔══════════════════════════════════════════╗"
+    lines[#lines + 1] = "║  [DebugHook] Capture #" .. cap.index
+    lines[#lines + 1] = "║  Source : " .. cap.source .. ":" .. cap.line
+    lines[#lines + 1] = "║  Func   : " .. (cap.funcName or "<anonymous>")
+    lines[#lines + 1] = "╚══════════════════════════════════════════╝"
+
+    lines[#lines + 1] = "── Locals ──"
+    if not cap.localOrder or #cap.localOrder == 0 then
+        lines[#lines + 1] = "  (none)"
+    else
+        for _, name in ipairs(cap.localOrder) do
+            lines[#lines + 1] = formatVar(name, cap.locals[name], 1, optMaxDepth, optMaxFields)
+        end
+    end
+
+    if cap.upOrder and #cap.upOrder > 0 then
+        lines[#lines + 1] = "── Upvalues ──"
+        for _, name in ipairs(cap.upOrder) do
+            lines[#lines + 1] = formatVar(name, cap.upvalues[name], 1, optMaxDepth, optMaxFields)
+        end
+    end
+
+    if cap.locals and cap.locals.self and type(cap.locals.self) == "table" then
+        lines[#lines + 1] = "── self fields ──"
+        local count = 0
+        for k, v in pairs(cap.locals.self) do
+            count = count + 1
+            if count > optMaxFields then
+                lines[#lines + 1] = "  ... total fields exceed " .. optMaxFields
+                break
+            end
+            local keyStr = type(k) == "string" and k or ("[" .. tostring(k) .. "]")
+            if type(v) == "table" then
+                lines[#lines + 1] = "  self." .. keyStr .. " = " .. dumpTable(v, 2, math_min(optMaxDepth, 2), 10, {})
+            else
+                lines[#lines + 1] = "  self." .. keyStr .. " = " .. safeToStr(v) .. "  [" .. type(v) .. "]"
+            end
+        end
+    end
+
+    if cap.stack and #cap.stack > 0 then
+        lines[#lines + 1] = "── Call Stack ──"
+        for i, frame in ipairs(cap.stack) do
+            lines[#lines + 1] = "  #" .. i .. " " .. frame.source .. ":" .. frame.line .. " in " .. frame.func
+        end
+    end
+
+    lines[#lines + 1] = "══════════════════════════════════════════"
+    return table_concat(lines, "\n")
+end
+--endregion
+
+-- ═══════════════════════════════════════════
+--region 环形缓冲 + JSONL 输出
+-- ═══════════════════════════════════════════
+local function bufferCapture(cap)
+    if bufferHead >= BUFFER_MAX then return end
+    local jsonData = {
+        index = cap.index,
+        source = cap.source,
+        line = cap.line,
+        funcName = cap.funcName,
+        locals = cap.locals,
+        upvalues = cap.upvalues,
+        stack = cap.stack,
+        timestamp = os.time(),
+    }
+    local ok, json = pcall(jsonEncode, jsonData)
+    if ok then
+        bufferHead = bufferHead + 1
+        ringBuffer[bufferHead] = json .. "\n"
+    end
+end
+
+function DebugHook.FlushBuffer()
+    if bufferHead == 0 then return end
+    if not captureWriterAvailable then
+        -- 尝试初始化
+        local ok = pcall(function()
+            if CS and CS.DebugCaptureWriter and not CS.DebugCaptureWriter.IsOpened() then
+                CS.DebugCaptureWriter.Open()
+            end
+        end)
+        captureWriterAvailable = ok and CS and CS.DebugCaptureWriter and CS.DebugCaptureWriter.IsOpened() or false
+    end
+
+    if captureWriterAvailable then
+        local blob = table_concat(ringBuffer, "", 1, bufferHead)
+        local ok, err = pcall(function()
+            CS.DebugCaptureWriter.Append(blob)
+            CS.DebugCaptureWriter.Flush()
+        end)
+        if not ok then
+            logError("[DebugHook] Flush error: " .. tostring(err))
+            captureWriterAvailable = false
+        end
+    end
+
+    for i = 1, bufferHead do
+        ringBuffer[i] = nil
+    end
+    bufferHead = 0
+end
+--endregion
+
+-- ═══════════════════════════════════════════
+--region 性能安全阀
+-- ═══════════════════════════════════════════
+local function checkPerformance()
+    -- DeltaTime 是 Game:Update() 每帧设置的全局变量
+    local dt = DeltaTime or (Time and Time.deltaTime) or 0
+    if dt > (1 / PERF_FPS_THRESHOLD) then
+        lowFPSCount = lowFPSCount + 1
+        if lowFPSCount >= PERF_KILL_FRAMES then
+            DebugHook.Stop()
+            output("[DebugHook] KILLED: sustained low FPS for " .. PERF_KILL_FRAMES .. " frames")
+            return false
+        end
+    else
+        lowFPSCount = 0
+    end
+    return true
+end
+--endregion
+
+-- ═══════════════════════════════════════════
+--region 结构化条件求值 (安全，无 load)
+-- ═══════════════════════════════════════════
+local function evalCondition(cond, locals, upvalues, selfT)
+    if not cond then return true end
+    -- cond = {var="xxx", op="==", value=nil}
+    local varName = cond.var
+    local op = cond.op or "=="
+    local expected = cond.value
+
+    -- 查找变量值
+    local actual = locals[varName]
+    if actual == nil and upvalues then actual = upvalues[varName] end
+    if actual == nil and selfT then actual = selfT[varName] end
+
+    if op == "==" then return actual == expected
+    elseif op == "~=" then return actual ~= expected
+    elseif op == ">" then return actual ~= nil and actual > expected
+    elseif op == "<" then return actual ~= nil and actual < expected
+    elseif op == ">=" then return actual ~= nil and actual >= expected
+    elseif op == "<=" then return actual ~= nil and actual <= expected
+    elseif op == "nil" then return actual == nil
+    elseif op == "notnil" then return actual ~= nil
+    end
+    return true
+end
+--endregion
+
+-- ═══════════════════════════════════════════
+--region 核心 Hook ("l" line hook + func 缓存)
+-- ═══════════════════════════════════════════
+local lineCounter = 0
+local PERF_CHECK_INTERVAL = 500
+
+local function lineHook(event, line)
+    if event ~= "line" then return end
+
+    -- 安全阀降频检查
+    lineCounter = lineCounter + 1
+    if lineCounter >= PERF_CHECK_INTERVAL then
+        lineCounter = 0
+        if not checkPerformance() then return end
+    end
+
+    -- 获取当前函数的 source（带缓存）
+    local info = debug_getinfo(2, "Sf")
+    if not info then return end
+
+    local func = info.func
+    local source = func and funcSourceCache[func]
+    if source == nil then
+        source = normalizeSource(info.source)
+        if func then funcSourceCache[func] = source end
+    end
+
+    -- 查断点：二级 hashtable 快速跳过
+    local fileBPs = breakpoints[source]
+    if not fileBPs then return end
+    local bp = fileBPs[line]
+    if not bp then return end
+
+    -- 命中! 开始采集
+    totalCaptures = totalCaptures + 1
+
+    local fullInfo = debug_getinfo(2, "Sn")
+    local locals, localOrder = captureLocals(3) -- 1=captureLocals, 2=lineHook, 3=目标函数
+    local upvalues, upOrder = captureUpvalues(func)
+
+    -- 条件检查
+    if bp.cond then
+        local selfT = locals.self and type(locals.self) == "table" and locals.self or nil
+        if not evalCondition(bp.cond, locals, upvalues, selfT) then
+            totalCaptures = totalCaptures - 1
+            return
+        end
+    end
+
+    -- 变量过滤
+    if bp.vars then
+        local filteredLocals, filteredOrder = {}, {}
+        for _, varName in ipairs(bp.vars) do
+            if locals[varName] ~= nil then
+                filteredLocals[varName] = locals[varName]
+                filteredOrder[#filteredOrder + 1] = varName
+            elseif upvalues[varName] ~= nil then
+                filteredLocals[varName] = upvalues[varName]
+                filteredOrder[#filteredOrder + 1] = varName
+            elseif locals.self and type(locals.self) == "table" and locals.self[varName] ~= nil then
+                filteredLocals["self." .. varName] = locals.self[varName]
+                filteredOrder[#filteredOrder + 1] = "self." .. varName
+            else
+                filteredLocals[varName] = nil
+                filteredOrder[#filteredOrder + 1] = varName
+            end
+        end
+        locals, localOrder = filteredLocals, filteredOrder
+        upvalues, upOrder = {}, {}
+    end
+
+    -- 调用栈
+    local stack = captureStack(3, bp.stackDepth or optStackDepth)
+
+    local cap = {
+        index      = totalCaptures,
+        source     = source,
+        line       = line,
+        funcName   = fullInfo and fullInfo.name,
+        locals     = locals,
+        localOrder = localOrder,
+        upvalues   = upvalues,
+        upOrder    = upOrder,
+        stack      = stack,
+    }
+    captureResults[#captureResults + 1] = cap
+
+    -- Console 输出
+    output(formatCapture(cap))
+    -- JSONL 立即写入（防止后续崩溃导致数据丢失）
+    bufferCapture(cap)
+    DebugHook.FlushBuffer()
+
+    -- hit count
+    bp._hits = (bp._hits or 0) + 1
+    if bp.maxHits and bp._hits >= bp.maxHits then
+        -- 移除此断点
+        breakpoints[source][line] = nil
+        -- 检查该文件是否还有断点
+        if not next(breakpoints[source]) then
+            breakpoints[source] = nil
+            breakpointCount = breakpointCount - 1
+        end
+    end
+
+    -- 全局 maxCaptures 检查
+    if totalCaptures >= maxCaptures then
+        DebugHook.Stop()
+        output("[DebugHook] Auto-stopped after " .. totalCaptures .. " captures")
+    end
+end
+--endregion
+
+-- ═══════════════════════════════════════════
+--region 协程 Hook 传播
+-- ═══════════════════════════════════════════
+local function patchCoroutines()
+    if originalCoroutineCreate then return end -- 已 patch
+    originalCoroutineCreate = coroutine.create
+    originalCoroutineWrap = coroutine.wrap
+
+    coroutine.create = function(f)
+        local co = originalCoroutineCreate(f)
+        if isActive and hookFunc then
+            debug_sethook(co, hookFunc, "l")
+        end
+        return co
+    end
+
+    coroutine.wrap = function(f)
+        local co = originalCoroutineCreate(f)
+        if isActive and hookFunc then
+            debug_sethook(co, hookFunc, "l")
+        end
+        return function(...)
+            return select(2, coroutine.resume(co, ...))
+        end
+    end
+end
+
+local function unpatchCoroutines()
+    if originalCoroutineCreate then
+        coroutine.create = originalCoroutineCreate
+        coroutine.wrap = originalCoroutineWrap
+        originalCoroutineCreate = nil
+        originalCoroutineWrap = nil
+    end
+end
+--endregion
+
+-- ═══════════════════════════════════════════
+--region 断点注册
+-- ═══════════════════════════════════════════
+local function addBreakpoint(source, line, config)
+    local normSrc = normalizeSource(source)
+    if not breakpoints[normSrc] then
+        breakpoints[normSrc] = {}
+        breakpointCount = breakpointCount + 1
+    end
+    config = config or {}
+    config._hits = 0
+    breakpoints[normSrc][line] = config
+end
+
+local function clearBreakpoints()
+    breakpoints = {}
+    breakpointCount = 0
+end
+--endregion
+
+-- ═══════════════════════════════════════════
+--region 启动 Hook
+-- ═══════════════════════════════════════════
+local function startHook()
+    -- 互斥检测
+    local existingHook = debug_gethook()
+    if existingHook and existingHook ~= hookFunc then
+        output("[DebugHook] WARNING: 覆盖了一个已存在的 hook (可能是 LuaProfilerHook)")
+    end
+
+    -- 重置状态
+    totalCaptures = 0
+    captureResults = {}
+    currentSource = nil
+    currentFileHasBP = false
+    sourceStack = {}
+    stackTop = 0
+    lowFPSCount = 0
+    lineCounter = 0
+    bufferHead = 0
+    ringBuffer = {}
+
+    -- 初始化 JSONL 输出
+    captureWriterAvailable = false
+    pcall(function()
+        if CS and CS.DebugCaptureWriter then
+            CS.DebugCaptureWriter.Open()
+            captureWriterAvailable = CS.DebugCaptureWriter.IsOpened()
+        end
+    end)
+
+    -- 安装 hook ("l" line hook + func 缓存)
+    hookFunc = lineHook
+    debug_sethook(hookFunc, "l")
+    isActive = true
+
+    -- 协程传播
+    patchCoroutines()
+end
+--endregion
+
+-- ═══════════════════════════════════════════
+--region 公开 API
+-- ═══════════════════════════════════════════
+
+--- 多断点并发监听
+function DebugHook.WatchMulti(bpList, options)
+    options = options or {}
+    maxCaptures    = options.maxCaptures  or DEFAULT_MAX_CAPTURES
+    optMaxDepth    = options.maxDepth     or DEFAULT_TABLE_DEPTH
+    optMaxFields   = options.maxFields    or DEFAULT_TABLE_FIELDS
+    optStackDepth  = options.stackDepth   or DEFAULT_STACK_DEPTH
+
+    DebugHook.Stop()
+    clearBreakpoints()
+
+    for _, bp in ipairs(bpList) do
+        addBreakpoint(bp.source, bp.line, {
+            vars       = bp.vars,
+            cond       = bp.cond,
+            maxHits    = bp.maxHits,
+            stackDepth = bp.stackDepth,
+        })
+    end
+
+    startHook()
+
+    local bpDesc = {}
+    for _, bp in ipairs(bpList) do
+        bpDesc[#bpDesc + 1] = "  " .. bp.source .. ":" .. bp.line
+    end
+    output("[DebugHook] WatchMulti: " .. #bpList .. " breakpoints\n" .. table_concat(bpDesc, "\n")
+           .. "\n  (max " .. maxCaptures .. " captures)")
+    if captureWriterAvailable then
+        output("[DebugHook] JSONL output: " .. (CS.DebugCaptureWriter.GetFilePath() or "?"))
+    end
+end
+
+--- 单断点：监听指定行
+function DebugHook.WatchLine(sourcePattern, targetLine, options)
+    options = options or {}
+    DebugHook.WatchMulti({
+        {source = sourcePattern, line = targetLine, vars = options.vars},
+    }, options)
+end
+
+--- 单断点：仅当变量为 nil 时触发
+function DebugHook.WatchNil(sourcePattern, targetLine, varName, options)
+    options = options or {}
+    DebugHook.WatchMulti({
+        {source = sourcePattern, line = targetLine,
+         cond = {var = varName, op = "nil"}},
+    }, options)
+    output("[DebugHook] Condition: " .. varName .. " == nil")
+end
+
+--- 函数入口监听 (使用 call event)
+function DebugHook.WatchCall(sourcePattern, funcName, options)
+    options = options or {}
+    maxCaptures    = options.maxCaptures or DEFAULT_MAX_CAPTURES
+    optMaxDepth    = options.maxDepth    or DEFAULT_TABLE_DEPTH
+    optMaxFields   = options.maxFields   or DEFAULT_TABLE_FIELDS
+    optStackDepth  = options.stackDepth  or DEFAULT_STACK_DEPTH
+
+    DebugHook.Stop()
+    clearBreakpoints()
+    totalCaptures = 0
+    captureResults = {}
+
+    -- WatchCall 使用独立的 call-only hook (性能更好)
+    local function callHook(event)
+        if event ~= "call" then return end
+        local info = debug_getinfo(2, "Snlf")
+        if not info.name or info.name ~= funcName then return end
+        local src = normalizeSource(info.source)
+        if not sourceExactMatch(src, normalizeSource(sourcePattern)) then return end
+
+        totalCaptures = totalCaptures + 1
+        local locals, localOrder = captureLocals(3)
+        local upvalues, upOrder = captureUpvalues(info.func)
+        local stack = captureStack(3, optStackDepth)
+
+        local cap = {
+            index      = totalCaptures,
+            source     = src,
+            line       = info.currentline or info.linedefined,
+            funcName   = info.name,
+            locals     = locals,
+            localOrder = localOrder,
+            upvalues   = upvalues,
+            upOrder    = upOrder,
+            stack      = stack,
+        }
+        captureResults[#captureResults + 1] = cap
+        output(formatCapture(cap))
+        bufferCapture(cap)
+        DebugHook.FlushBuffer()
+
+        if totalCaptures >= maxCaptures then
+            DebugHook.Stop()
+            output("[DebugHook] Auto-stopped after " .. totalCaptures .. " call captures")
+        end
+    end
+
+    -- 初始化 JSONL
+    captureWriterAvailable = false
+    pcall(function()
+        if CS and CS.DebugCaptureWriter then
+            CS.DebugCaptureWriter.Open()
+            captureWriterAvailable = CS.DebugCaptureWriter.IsOpened()
+        end
+    end)
+
+    hookFunc = callHook
+    debug_sethook(hookFunc, "c")
+    isActive = true
+    output("[DebugHook] WatchCall: " .. funcName .. "() in " .. sourcePattern
+           .. " (max " .. maxCaptures .. " captures)")
+end
+
+--- 停止
+function DebugHook.Stop()
+    if isActive then
+        debug_sethook()
+        isActive = false
+        hookFunc = nil
+        -- flush 残余
+        DebugHook.FlushBuffer()
+        pcall(function()
+            if CS and CS.DebugCaptureWriter and CS.DebugCaptureWriter.IsOpened() then
+                CS.DebugCaptureWriter.Close()
+            end
+        end)
+        captureWriterAvailable = false
+        unpatchCoroutines()
+        output("[DebugHook] Stopped. Total captures: " .. totalCaptures)
+    end
+end
+
+function DebugHook.Results()
+    return captureResults
+end
+
+function DebugHook.Clear()
+    captureResults = {}
+    totalCaptures = 0
+end
+
+function DebugHook.IsActive()
+    return isActive
+end
+
+function DebugHook.GetBreakpoints()
+    return breakpoints
+end
+--endregion
+
+-- ═══════════════════════════════════════════
+--region 冒烟测试
+-- ═══════════════════════════════════════════
+function DebugHook._SelfTest()
+    -- normalizeSource
+    assert(normalizeSource("@RPG/Entity/EntityHero") == "RPG/Entity/EntityHero")
+    assert(normalizeSource("RPG/Entity/EntityHero") == "RPG/Entity/EntityHero")
+    assert(normalizeSource("@RPG/Entity/EntityHero.txt") == "RPG/Entity/EntityHero")
+    assert(normalizeSource('[string "UI/Hero/UI_Hero_SkillPreview"]') == "UI/Hero/UI_Hero_SkillPreview")
+    assert(normalizeSource('[string "RPG/Entity/EntityHero.txt"]') == "RPG/Entity/EntityHero")
+
+    -- sourceExactMatch
+    assert(sourceExactMatch("RPG/Entity/EntityHero", "RPG/Entity/EntityHero"))
+    assert(sourceExactMatch("RPG/Entity/EntityHero", "Entity/EntityHero"))
+    assert(not sourceExactMatch("RPG/Entity/EntityHeroView", "EntityHero"))
+
+    -- safeToStr
+    assert(safeToStr(nil) == "nil")
+    assert(safeToStr(42) == "42")
+    assert(type(safeToStr("hello")) == "string")
+
+    -- dumpTable circular
+    local t = {}; t.self = t
+    local s = dumpTable(t, 0, 2, 10, {})
+    assert(s:find("circular"))
+
+    -- jsonEncode
+    local j = jsonEncode({a=1, b="hello", c=true, d={1,2}})
+    assert(type(j) == "string")
+    assert(j:find('"a"'))
+
+    -- evalCondition
+    assert(evalCondition({var="x", op="==", value=nil}, {x=nil}, {}, nil))
+    assert(evalCondition({var="x", op=">", value=5}, {x=10}, {}, nil))
+    assert(not evalCondition({var="x", op=">", value=5}, {x=3}, {}, nil))
+
+    -- 快速 WatchLine + Stop
+    DebugHook.WatchLine("__selftest__", 1, {maxCaptures = 1})
+    assert(DebugHook.IsActive())
+    DebugHook.Stop()
+    assert(not DebugHook.IsActive())
+
+    output("[DebugHook] _SelfTest PASSED")
+end
+--endregion
+
+return DebugHook
