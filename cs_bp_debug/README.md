@@ -110,9 +110,9 @@ JSONL 输出到 `Temp/cs_debug_capture.jsonl`，每行一条记录：
 - **Layer 2 降级**：Mono.CSharp 不可用时自动退化为简单字段比较，不会报错
 - **仅 Editor**：所有代码包裹在 `#if UNITY_EDITOR` 中，不进入构建
 
-## 与 Lua 版 (bp_debug) 的差异
+## 与 Lua 版 (lua_bp_debug) 的差异
 
-| 特性 | bp_debug (Lua) | cs_bp_debug (C#) |
+| 特性 | lua_bp_debug (Lua) | cs_bp_debug (C#) |
 |------|----------------|------------------|
 | 拦截机制 | debug.sethook | HarmonyLib Prefix/Postfix |
 | 条件断点 | 结构化 {var,op,value} | C# 表达式 (Layer 2) |

@@ -11,7 +11,7 @@ description: 为目标 Skill 添加 Tag 标签，并同步更新根目录 README
 
 ```bash
 # 为指定 skill 添加标签
-/add_tag bp_debug lua,debugging,mcp
+/add_tag lua_bp_debug lua,debugging,mcp
 
 # 交互模式：无参数时列出所有 skill 让用户选择
 /add_tag
@@ -36,8 +36,8 @@ description: 为目标 Skill 添加 Tag 标签，并同步更新根目录 README
 验证目标 skill 目录存在且包含 `SKILL.md`，否则报错退出。
 
 **变量**：
-- `SKILL_NAME`: skill 目录名，如 `bp_debug`
-- `SKILL_DIR`: skill 完整路径，如 `./bp_debug/`
+- `SKILL_NAME`: skill 目录名，如 `lua_bp_debug`
+- `SKILL_DIR`: skill 完整路径，如 `./lua_bp_debug/`
 
 ### Step 2: 确定要添加的 Tags
 
@@ -56,7 +56,7 @@ description: 为目标 Skill 添加 Tag 标签，并同步更新根目录 README
 
 ```yaml
 ---
-name: bp_debug
+name: lua_bp_debug
 description: ...
 tags: [lua, debugging]
 ---
@@ -78,7 +78,7 @@ tags: [lua, debugging]
 **更新前**：
 ```yaml
 ---
-name: bp_debug
+name: lua_bp_debug
 description: 自动断点调试...
 ---
 ```
@@ -86,7 +86,7 @@ description: 自动断点调试...
 **更新后**：
 ```yaml
 ---
-name: bp_debug
+name: lua_bp_debug
 description: 自动断点调试...
 tags: [debugging, lua, mcp]
 ---
@@ -101,7 +101,7 @@ tags: [debugging, lua, mcp]
 ```markdown
 | Skill | Tags | 说明 |
 |-------|------|------|
-| [bp_debug](./bp_debug/) | `lua` `debugging` `mcp` | 自动断点调试：... |
+| [lua_bp_debug](./lua_bp_debug/) | `lua` `debugging` `mcp` | 自动断点调试：... |
 | [lua_hot_reload](./lua_hot_reload/) | `lua` `hot-reload` `mcp` | 判定 Lua 文件... |
 ```
 

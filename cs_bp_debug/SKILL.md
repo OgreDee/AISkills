@@ -82,7 +82,7 @@ Claude 根据 bug 描述自动分析 C# 代码、通过 Harmony 设置运行时 
 1. 收集 bug 描述（用户口述 / 堆栈 / 截图）
 2. 提取关键词：模块、症状、触发条件
 3. 如果有堆栈，解析 `Type.Method` 及行号
-4. **判断 C# 还是 Lua**：如果是 Lua 层 bug，建议切换到 `bp_debug` skill
+4. **判断 C# 还是 Lua**：如果是 Lua 层 bug，建议切换到 `lua_bp_debug` skill
 
 ### Phase 2: 代码分析
 
@@ -255,9 +255,9 @@ Read Temp/cs_debug_capture.jsonl
 - Layer 2 REPL 求值有额外开销，复杂表达式可能影响帧率
 - 建议在调试时关闭不必要的 patch（`stop` 命令）
 
-## 与 Lua 版 (bp_debug) 的差异
+## 与 Lua 版 (lua_bp_debug) 的差异
 
-| 特性 | bp_debug (Lua) | cs_bp_debug (C#) |
+| 特性 | lua_bp_debug (Lua) | cs_bp_debug (C#) |
 |------|----------------|------------------|
 | 拦截机制 | debug.sethook | HarmonyLib Prefix/Postfix |
 | 条件断点 | 结构化 {var,op,value} | C# 表达式 (Layer 2) 或简单字段比较 (降级) |

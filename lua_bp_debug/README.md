@@ -1,4 +1,4 @@
-# bp_debug — AI 自动断点调试技能
+# lua_bp_debug — AI 自动断点调试技能
 
 基于 MCP (Model Context Protocol) 的 Unity XLua 自动断点调试工具。让 Claude 能够分析 Bug、自动注入断点、捕获运行时数据并定位根因。
 
@@ -22,7 +22,7 @@ Bug 描述 → Claude 分析代码 → 生成断点 → MCP 注入 Unity → Lua
 ## 目录结构
 
 ```
-bp_debug/
+lua_bp_debug/
 ├── README.md
 ├── SKILL.md              # 完整技能文档（Skill Prompt）
 ├── install.sh            # 一键部署脚本
@@ -38,7 +38,7 @@ bp_debug/
 
 ```bash
 cd /path/to/your/unity/project
-bash /path/to/bp_debug/install.sh .
+bash /path/to/lua_bp_debug/install.sh .
 ```
 
 脚本会将文件部署到：

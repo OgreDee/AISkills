@@ -232,9 +232,9 @@ public static class CSharpDebugMcpTool
 }
 ```
 
-## 4. 与 Lua 版 bp_debug 的对比表
+## 4. 与 Lua 版 lua_bp_debug 的对比表
 
-| 维度 | Lua bp_debug | C# Hybrid (本方案) |
+| 维度 | Lua lua_bp_debug | C# Hybrid (本方案) |
 |------|-------------|---------------------|
 | **断点粒度** | 行级 (debug.sethook "l") | 方法级 (Harmony Prefix/Postfix) |
 | **局部变量** | ✅ debug.getlocal | ❌ 无法直接访问（需 Transpiler） |

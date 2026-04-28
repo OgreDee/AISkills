@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ═══════════════════════════════════════════════════════════════════════
-# bp_debug install - 一键部署 Lua 断点调试工具到 Unity 项目
+# lua_bp_debug install - 一键部署 Lua 断点调试工具到 Unity 项目
 # ═══════════════════════════════════════════════════════════════════════
 #
 # 用法:
@@ -42,7 +42,7 @@ PROJECT_ROOT="$(cd "$PROJECT_ROOT" && pwd)"
 
 # ─── 校验 ───
 echo -e "${CYAN}═══════════════════════════════════════════${NC}"
-echo -e "${CYAN}  bp_debug installer${NC}"
+echo -e "${CYAN}  lua_bp_debug installer${NC}"
 echo -e "${CYAN}═══════════════════════════════════════════${NC}"
 echo ""
 echo -e "  项目目录: ${YELLOW}$PROJECT_ROOT${NC}"
