@@ -194,6 +194,7 @@ for i in $(seq 1 20); do if [ -s Temp/debug_capture.jsonl ]; then echo "CAPTURED
 **如果定位到根因**：
 - 输出诊断报告：变量异常值 + 原因分析 + 修复方案
 - 如果用户同意，直接修复代码
+- 修复完成后进入 **Phase 7: 热重载检查**
 
 **如果需要更多数据**（未超 3 轮）：
 - 调整断点位置（上下游函数、增加/缩小 watch 范围）
@@ -202,6 +203,29 @@ for i in $(seq 1 20); do if [ -s Temp/debug_capture.jsonl ]; then echo "CAPTURED
 **如果 3 轮仍未定位**：
 - 输出阶段性报告：已排除的假设 + 已观测到的数据 + 建议方向
 - 建议切换策略：code review / 加日志 / 单元测试
+
+### Phase 7: 热重载检查
+
+调试结束且修复了 Lua 文件后，自动检测是否有可热重载的文件。
+
+**触发条件**：Phase 6 中修复了代码（即对 `Assets/HotRes/Lua/` 下的 `.txt` 文件进行了编辑）。
+
+**执行步骤**：
+
+1. **检测修改文件**：执行 `git diff --name-only HEAD` 筛选 `Assets/HotRes/Lua/` 下的 `.txt` 文件
+2. **无修改文件** → 跳过，流程结束
+3. **有修改文件** → 列出所有修改的 Lua 文件，询问用户是否热重载：
+
+```
+已修改以下 Lua 文件：
+  [1] RPG/Entity/EntityHero.txt
+  [2] RPG/Entity/State/RPGHeroIdle.txt
+
+是否对这些文件执行热重载？（Unity Play Mode 仍在运行中可直接生效）
+```
+
+4. **用户同意** → 对每个文件调用 `/lua_hot_reload {MOD_PATH}`（Skill 工具），由 lua_hot_reload 负责安全检查和执行
+5. **用户拒绝** → 提示用户重启 Play Mode 使修改生效
 
 ## DebugHook API 速查
 
