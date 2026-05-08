@@ -8,6 +8,31 @@ tags: [debug, lua, csharp, unity]
 
 根据 bug 信息自动判定属于 Lua 层还是 C# 层，然后路由到对应的专项调试 skill。
 
+## 安装
+
+一键部署所有依赖 skill 的运行时文件：
+
+```bash
+# 部署到当前项目
+.claude/skills/bp/install.sh
+
+# 部署到指定项目
+.claude/skills/bp/install.sh /path/to/unity/project
+```
+
+会依次执行以下 skill 的 install：
+- `lua_bp_debug/install.sh` — Lua 断点调试工具
+- `cs_bp_debug/install.sh` — C# 断点调试工具
+- `lua_hot_reload/install.sh` — Lua 热重载工具
+
+## 依赖 Skill
+
+| Skill | 用途 |
+|-------|------|
+| `lua_bp_debug` | Lua 层断点调试 |
+| `cs_bp_debug` | C# 层断点调试 |
+| `lua_hot_reload` | 修复 Lua 后热重载 |
+
 ## 使用方法
 
 ```bash
